@@ -93,9 +93,7 @@ Place CSV files in `data/` or pass `--data_path` directly.
 @misc{mshgn2025,
   title   = {MSHGN: Multiscale Hypergraph Network for
              Multivariate Time Series Imputation},
-  author  = {[Authors]},
   year    = {2025},
-  note    = {Stage proposal, University [X]}
 }
 ```
 
