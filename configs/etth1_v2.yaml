@@ -1,0 +1,30 @@
+# MSHGN V2 — Lightweight configuration
+# Target: <4GB GPU memory, <1.5s/batch
+
+model:
+  variant: v2
+  d_model: 64          # 128 → 64
+  num_layers: 3
+  num_scales: 2        # 3 → 2
+  conv_kernel: 9
+  n_heads: 4
+  dropout: 0.15        # slightly higher regularization
+  use_checkpoint: true
+  use_amp: true
+
+data:
+  dataset: ETTh1
+  seq_len: 1024
+  features: M
+
+training:
+  epochs: 20
+  batch_size: 32
+  lr: 0.001
+  weight_decay: 0.0005
+  optimizer: AdamW
+  scheduler: CosineAnnealing
+  eta_min: 0.000001
+  patience: 10
+  masking_ratios: [0.125, 0.25, 0.375, 0.5]
+  n_concat: 1          # sequential (lower memory)
