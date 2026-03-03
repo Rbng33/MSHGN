@@ -86,7 +86,7 @@ class MonthOfYear(TimeFeature):
 class WeekOfYear(TimeFeature):
     """Week of year encoded as value between [-0.5, 0.5]"""
     def __call__(self, index: pd.DatetimeIndex) -> np.ndarray:
-        return (index.week - 1) / 52.0 - 0.5
+        return (index.isocalendar().week.astype(float) - 1) / 52.0 - 0.5
 
 def time_features_from_frequency_str(freq_str: str) -> List[TimeFeature]:
     """
@@ -273,7 +273,7 @@ class Dataset_ETT_hour(Dataset):
         return seq_x, seq_y, seq_x_mark, seq_y_mark
 
     def __len__(self):
-        return len(self.data_x) - self.seq_len- self.pred_len + 1
+        return len(self.data_x) - self.seq_len + 1
 
     def inverse_transform(self, data):
         return self.scaler.inverse_transform(data)
