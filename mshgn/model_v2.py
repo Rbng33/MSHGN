@@ -3,15 +3,10 @@
 # Target: <4GB memory, <1.5s/batch, similar performance
 # ============================================================
 
+import math
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import math
-import numpy as np
-import os, gc, time
-from collections import defaultdict
-from torch.utils.data import DataLoader
-from torch.optim.lr_scheduler import CosineAnnealingLR
 from torch.utils.checkpoint import checkpoint as grad_checkpoint
 
 
