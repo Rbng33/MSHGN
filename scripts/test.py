@@ -1,8 +1,8 @@
 """
 MSHGN Test Script
 Usage: python scripts/test.py --config configs/etth1_v1.yaml
-                              --data_path /path/to/ETTh1.csv
-                              --ckpt mshgn_best.pth
+                               --data_path /path/to/ETTh1.csv
+                               --ckpt mshgn_best.pth
 """
 
 import argparse
@@ -12,6 +12,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 import yaml
+from collections import defaultdict
 from torch.utils.data import DataLoader
 
 import sys
@@ -31,9 +32,9 @@ def generate_mask(B, C, L, ratio, device):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--config', required=True)
+    parser.add_argument('--config',    required=True)
     parser.add_argument('--data_path', required=True)
-    parser.add_argument('--ckpt', required=True)
+    parser.add_argument('--ckpt',      required=True)
     args = parser.parse_args()
 
     with open(args.config) as f:
@@ -43,26 +44,23 @@ def main():
     log(f"Device: {device}")
 
     # ── Dataset ──────────────────────────────────────────────
-    root = os.path.dirname(args.data_path)
-    fname = os.path.basename(args.data_path)
+    root    = os.path.dirname(args.data_path)
+    fname   = os.path.basename(args.data_path)
     seq_len = cfg['data']['seq_len']
 
     test_ds = Dataset_ETT_hour(
         root, 'test', [seq_len, 0, 0],
         cfg['data']['features'], fname
     )
-
+    # FIX: drop_last=False to evaluate on all test samples
     test_dl = DataLoader(
-        test_ds,
-        batch_size=cfg['training']['batch_size'],
-        shuffle=False,
-        drop_last=True,
-        num_workers=4,
-        pin_memory=True
+        test_ds, batch_size=64,
+        shuffle=False, drop_last=False,
+        num_workers=4, pin_memory=True
     )
 
     C = test_ds[0][0].shape[-1]
-    log(f"Channels: {C} | Seq_len: {seq_len}")
+    log(f"Test samples: {len(test_ds):,} | Channels: {C} | Seq_len: {seq_len}")
 
     # ── Model ────────────────────────────────────────────────
     m_cfg = cfg['model']
@@ -75,60 +73,110 @@ def main():
         conv_kernel=m_cfg['conv_kernel'],
         n_heads=m_cfg['n_heads'],
         dropout=m_cfg['dropout'],
-        use_checkpoint=False,  # disable for inference
+        use_checkpoint=False,   # disabled for inference
         use_amp=False
     ).to(device)
 
-    model.load_state_dict(torch.load(args.ckpt, map_location=device))
+    sd = torch.load(args.ckpt, map_location=device)
+    model.load_state_dict(sd)
     model.eval()
-
-    log(f"Loaded checkpoint: {args.ckpt}")
+    log(f"Loaded: {args.ckpt}")
     log(f"Parameters: {model.count_parameters():,}")
 
     # ── Testing ──────────────────────────────────────────────
-    ratios = cfg['training']['masking_ratios']
-    crit = nn.MSELoss(reduction='none')
+    ratios  = cfg['training']['masking_ratios']
+    crit    = nn.MSELoss(reduction='none')
+    mae_fn  = nn.L1Loss(reduction='none')
 
-    results = {r: [] for r in ratios}
+    # Per-ratio results
+    ratio_results = {}
 
-    log("\nTesting...")
+    # Per-channel accumulators (over all ratios combined)
+    ch_mse_all  = defaultdict(float)
+    ch_mae_all  = defaultdict(float)
+    ch_pts_all  = defaultdict(int)
+
+    log("\nTesting per masking rate...")
     log("=" * 60)
 
     with torch.no_grad():
         for r in ratios:
-            for i, (bx, *_) in enumerate(test_dl):
-                torch.manual_seed(int(r * 1000) + i)
+            mse_sum, mae_sum, n_pts = 0.0, 0.0, 0
+            ch_mse = defaultdict(float)
+            ch_mae = defaultdict(float)
+            ch_pts = defaultdict(int)
 
-                bx = bx.float().to(device)
-                xf = bx.transpose(1, 2).contiguous()
+            # Fixed seed per ratio for reproducibility
+            torch.manual_seed(int(r * 10000) + 99999)
 
-                B_ = xf.shape[0]
+            for bx, *_ in test_dl:
+                bx  = bx.float().to(device, non_blocking=True)
+                xf  = bx.transpose(1, 2).contiguous()       # (B, C, L)
+                B_  = xf.shape[0]
                 mask = generate_mask(B_, C, seq_len, r, device)
 
-                out = model(xf, mask=mask).float()
-                mi = 1.0 - mask
+                out  = model(xf, mask=mask).float()
+                mi   = 1.0 - mask                           # missing positions
 
-                mse = (
-                    (crit(out, xf) * mi).sum().item() /
-                    (mi.sum().item() + 1e-8)
-                )
+                mse  = crit(out, xf)  * mi
+                mae  = mae_fn(out, xf) * mi
 
-                results[r].append(mse)
+                mse_sum += mse.sum().item()
+                mae_sum += mae.sum().item()
+                n_pts   += mi.sum().item()
 
-    # ── Report ───────────────────────────────────────────────
-    log("\nTest Results")
+                # Per-channel accumulation
+                for c in range(C):
+                    cm = mi[:, c, :]
+                    if cm.sum() > 0:
+                        ch_mse[c] += mse[:, c, :].sum().item()
+                        ch_mae[c] += mae[:, c, :].sum().item()
+                        ch_pts[c] += int(cm.sum().item())
+                        ch_mse_all[c] += mse[:, c, :].sum().item()
+                        ch_mae_all[c] += mae[:, c, :].sum().item()
+                        ch_pts_all[c] += int(cm.sum().item())
+
+            avg_mse = mse_sum / (n_pts + 1e-8)
+            avg_mae = mae_sum / (n_pts + 1e-8)
+            ratio_results[r] = {
+                'mse': avg_mse,
+                'mae': avg_mae,
+                'per_ch': {
+                    c: {
+                        'mse': ch_mse[c] / (ch_pts[c] + 1e-8),
+                        'mae': ch_mae[c] / (ch_pts[c] + 1e-8)
+                    }
+                    for c in range(C) if ch_pts[c] > 0
+                }
+            }
+            log(f"  Mask {int(r*100):3d}%  →  MSE: {avg_mse:.6f}  |  MAE: {avg_mae:.6f}")
+
+    # ── Summary ──────────────────────────────────────────────
+    avg_mse = np.mean([ratio_results[r]['mse'] for r in ratios])
+    avg_mae = np.mean([ratio_results[r]['mae'] for r in ratios])
+
+    log("\n" + "=" * 60)
+    log(f"  {'Ratio':<10} {'MSE':<14} {'MAE':<14}")
+    log(f"  {'-'*38}")
+    for r in ratios:
+        log(f"  {int(r*100):3d}%       "
+            f"{ratio_results[r]['mse']:<14.6f} "
+            f"{ratio_results[r]['mae']:<14.6f}")
+    log(f"  {'-'*38}")
+    log(f"  {'AVERAGE':<10} {avg_mse:<14.6f} {avg_mae:<14.6f}")
+    log("=" * 60)
+    log(f"  Ref HGTS-Former ETTh1: MSE=0.085  MAE=0.192")
     log("=" * 60)
 
-    avg_all = []
-
-    for r in ratios:
-        avg_r = np.mean(results[r])
-        avg_all.append(avg_r)
-        log(f"Mask {int(r*100)}% → MSE: {avg_r:.6f}")
-
-    final = np.mean(avg_all)
-    log("-" * 60)
-    log(f"Average MSE across ratios: {final:.6f}")
+    # ── Per-Channel Summary ───────────────────────────────────
+    log("\nPer-Channel Results (averaged over all masking rates):")
+    log(f"  {'Channel':<10} {'MSE':<14} {'MAE':<14}")
+    log(f"  {'-'*38}")
+    for c in range(C):
+        if ch_pts_all[c] > 0:
+            c_mse = ch_mse_all[c] / ch_pts_all[c]
+            c_mae = ch_mae_all[c] / ch_pts_all[c]
+            log(f"  Ch_{c:<7} {c_mse:<14.6f} {c_mae:<14.6f}")
     log("=" * 60)
 
 
