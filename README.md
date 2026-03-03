@@ -86,7 +86,7 @@ Place CSV files in `data/` or pass `--data_path` directly.
 | Variant | d | Scales | Params | GPU | MSE |
 |---------|---|--------|--------|-----|-----|
 | V1 (best) | 128 | 3 | 2.22M | ~14GB | **0.0387** |
-| V2 (light) | 64 | 2 | ~550K | ~3GB | TBD |
+| V2 (light) | 64 | 2 | ~550K | ~3GB | **0.0470** |
 
 ## Citation
 ```bibtex
