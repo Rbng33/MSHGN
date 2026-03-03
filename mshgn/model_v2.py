@@ -14,7 +14,6 @@ from torch.utils.data import DataLoader
 from torch.optim.lr_scheduler import CosineAnnealingLR
 from torch.utils.checkpoint import checkpoint as grad_checkpoint
 
-os.environ['CUDA_VISIBLE_DEVICES'] = '0'
 
 
 def log(msg="", flush=True):
