@@ -392,3 +392,6 @@ class MSHGN(nn.Module):
         with torch.amp.autocast('cuda', enabled=self.use_amp):
             out = self.head(h).squeeze(-1)
         return self.revin(out.float(), 'denorm')
+
+    def count_parameters(self):
+        return sum(p.numel() for p in self.parameters())
