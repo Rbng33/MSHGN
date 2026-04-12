@@ -1,0 +1,30 @@
+# MSHGN V1 — ETTm1 configuration (15-min frequency)
+
+model:
+  variant: v1
+  d_model: 128
+  num_layers: 3
+  num_scales: 3
+  conv_kernel: 9
+  n_heads: 4
+  dropout: 0.1
+  use_checkpoint: true
+  use_amp: true
+
+data:
+  dataset: ETTm1
+  seq_len: 1024
+  features: M
+  freq: t
+
+training:
+  epochs: 8
+  batch_size: 24
+  lr: 0.001
+  weight_decay: 0.0005
+  optimizer: AdamW
+  scheduler: CosineAnnealing
+  eta_min: 0.000001
+  patience: 4
+  masking_ratios: [0.125, 0.25, 0.375, 0.5]
+  n_concat: 1
