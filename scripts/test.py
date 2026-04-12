@@ -19,7 +19,14 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from mshgn.model import MSHGN
-from mshgn.data import Dataset_ETT_hour
+from mshgn.data import Dataset_ETT_hour, Dataset_ETT_minute
+
+DATASET_MAP = {
+    'ETTh1': Dataset_ETT_hour,
+    'ETTh2': Dataset_ETT_hour,
+    'ETTm1': Dataset_ETT_minute,
+    'ETTm2': Dataset_ETT_minute,
+}
 
 
 def log(msg=""):
@@ -48,9 +55,14 @@ def main():
     fname   = os.path.basename(args.data_path)
     seq_len = cfg['data']['seq_len']
 
-    test_ds = Dataset_ETT_hour(
+    dataset_name = cfg['data'].get('dataset', 'ETTh1')
+    DatasetClass = DATASET_MAP.get(dataset_name, Dataset_ETT_hour)
+    freq = cfg['data'].get('freq', 'h')
+    log(f"Dataset class: {DatasetClass.__name__} (freq={freq})")
+
+    test_ds = DatasetClass(
         root, 'test', [seq_len, 0, 0],
-        cfg['data']['features'], fname
+        cfg['data']['features'], fname, freq=freq
     )
     # FIX: drop_last=False to evaluate on all test samples
     test_dl = DataLoader(
