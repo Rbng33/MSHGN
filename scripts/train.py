@@ -20,7 +20,14 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from mshgn.model import MSHGN
-from mshgn.data import Dataset_ETT_hour
+from mshgn.data import Dataset_ETT_hour, Dataset_ETT_minute
+
+DATASET_MAP = {
+    "ETTh1": Dataset_ETT_hour,
+    "ETTh2": Dataset_ETT_hour,
+    "ETTm1": Dataset_ETT_minute,
+    "ETTm2": Dataset_ETT_minute,
+}
 
 
 def log(msg=""):
@@ -52,10 +59,15 @@ def main():
     fname = os.path.basename(args.data_path)
     seq_len = cfg['data']['seq_len']
 
-    trn_ds = Dataset_ETT_hour(root, 'train', [seq_len, 0, 0],
-                               cfg['data']['features'], fname)
-    val_ds = Dataset_ETT_hour(root, 'val',   [seq_len, 0, 0],
-                               cfg['data']['features'], fname)
+    dataset_name = cfg['data'].get('dataset', 'ETTh1')
+    DatasetClass = DATASET_MAP.get(dataset_name, Dataset_ETT_hour)
+    freq = cfg['data'].get('freq', 'h')
+    log(f"Dataset class: {DatasetClass.__name__} (freq={freq})")
+
+    trn_ds = DatasetClass(root, 'train', [seq_len, 0, 0],
+                          cfg['data']['features'], fname, freq=freq)
+    val_ds = DatasetClass(root, 'val',   [seq_len, 0, 0],
+                          cfg['data']['features'], fname, freq=freq)
 
     C = trn_ds[0][0].shape[-1]
     log(f"Channels: {C} | Seq_len: {seq_len}")
