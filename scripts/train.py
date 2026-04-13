@@ -105,9 +105,9 @@ def main():
 
     bs = t_cfg['batch_size']
     trn_dl = DataLoader(trn_ds, bs, shuffle=True,  drop_last=True,
-                        num_workers=4, pin_memory=True)
+                        num_workers=8, pin_memory=True)
     val_dl = DataLoader(val_ds, bs, shuffle=False, drop_last=True,
-                        num_workers=4, pin_memory=True)
+                        num_workers=8, pin_memory=True)
 
     opt    = torch.optim.AdamW(model.parameters(),
                                lr=t_cfg['lr'], weight_decay=t_cfg['weight_decay'])
