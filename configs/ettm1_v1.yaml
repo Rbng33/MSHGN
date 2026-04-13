@@ -18,7 +18,7 @@ data:
   freq: t
 
 training:
-  epochs: 8
+  epochs: 5
   batch_size: 24
   lr: 0.001
   weight_decay: 0.0005
