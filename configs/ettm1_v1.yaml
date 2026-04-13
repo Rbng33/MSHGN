@@ -19,12 +19,12 @@ data:
 
 training:
   epochs: 5
-  batch_size: 24
+  batch_size: 48
   lr: 0.001
   weight_decay: 0.0005
   optimizer: AdamW
   scheduler: CosineAnnealing
   eta_min: 0.000001
-  patience: 4
+  patience: 3
   masking_ratios: [0.125, 0.25, 0.375, 0.5]
   n_concat: 1
