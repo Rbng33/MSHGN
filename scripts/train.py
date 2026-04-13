@@ -31,7 +31,6 @@ def log(msg=""):
 
 
 def progress_bar(current, total, loss, t0, bar_width=30):
-    """Print an inline progress bar that overwrites the current line."""
     pct = current / total
     filled = int(bar_width * pct)
     bar = "█" * filled + "░" * (bar_width - filled)
@@ -60,15 +59,11 @@ def main():
         cfg = yaml.safe_load(f)
 
     # ── GPU setup ─────────────────────────────────────────────
-    n_gpus = torch.cuda.device_count()
-    device = 'cuda' if torch.cuda.is_available() else 'cpu'
+    device = 'cuda:0' if torch.cuda.is_available() else 'cpu'
     if torch.cuda.is_available():
-        for i in range(n_gpus):
-            free, total = torch.cuda.mem_get_info(i)
-            log(f"GPU {i}: {torch.cuda.get_device_name(i)} | "
-                f"{total/1e9:.1f}GB total | {free/1e9:.1f}GB free")
-        if n_gpus > 1:
-            log(f"DataParallel enabled on {n_gpus} GPUs")
+        free, total = torch.cuda.mem_get_info(0)
+        log(f"GPU: {torch.cuda.get_device_name(0)} | "
+            f"{total/1e9:.1f}GB total | {free/1e9:.1f}GB free")
 
     # ── Datasets ──────────────────────────────────────────────
     root  = os.path.dirname(args.data_path)
@@ -99,36 +94,22 @@ def main():
         n_heads=m_cfg['n_heads'], dropout=m_cfg['dropout'],
         use_checkpoint=m_cfg['use_checkpoint'], use_amp=use_amp
     ).to(device)
-
-    # Wrap with DataParallel if multiple GPUs available
-    use_dp = (n_gpus > 1)
-    if use_dp:
-        model = nn.DataParallel(model)
-    
-    n_params = (model.module.count_parameters() if use_dp
-                else model.count_parameters())
-    log(f"Parameters: {n_params:,} | DataParallel: {use_dp}")
+    log(f"Parameters: {model.count_parameters():,}")
 
     # ── Training setup ────────────────────────────────────────
-    t_cfg   = cfg['training']
-    ratios  = t_cfg['masking_ratios']
+    t_cfg    = cfg['training']
+    ratios   = t_cfg['masking_ratios']
     n_concat = t_cfg.get('n_concat', 1)
     n_passes = len(ratios) // n_concat
-    groups  = [ratios[i:i+n_concat] for i in range(0, len(ratios), n_concat)]
+    groups   = [ratios[i:i+n_concat] for i in range(0, len(ratios), n_concat)]
 
-    # With DataParallel, scale batch size by number of GPUs
-    bs = t_cfg['batch_size'] * n_gpus if use_dp else t_cfg['batch_size']
-    if use_dp:
-        log(f"Effective batch size: {bs} ({t_cfg['batch_size']} × {n_gpus} GPUs)")
-
+    bs = t_cfg['batch_size']
     trn_dl = DataLoader(trn_ds, bs, shuffle=True,  drop_last=True,
                         num_workers=4, pin_memory=True)
     val_dl = DataLoader(val_ds, bs, shuffle=False, drop_last=True,
                         num_workers=4, pin_memory=True)
 
-    # Optimizer on base model params (DataParallel wraps them)
-    base_params = model.module.parameters() if use_dp else model.parameters()
-    opt    = torch.optim.AdamW(base_params,
+    opt    = torch.optim.AdamW(model.parameters(),
                                lr=t_cfg['lr'], weight_decay=t_cfg['weight_decay'])
     sched  = CosineAnnealingLR(opt, T_max=t_cfg['epochs'],
                                eta_min=t_cfg['eta_min'])
@@ -145,7 +126,7 @@ def main():
             vmasks[r][i] = generate_mask(bx.shape[0], C, seq_len, r, 'cpu')
 
     best_val, patience_cnt = float('inf'), 0
-    ckpt = os.path.join(args.save_dir, 'mshgn_best.pth')
+    ckpt      = os.path.join(args.save_dir, 'mshgn_best.pth')
     n_batches = len(trn_dl)
 
     log(f"\nTraining {t_cfg['epochs']} epochs | "
@@ -158,7 +139,6 @@ def main():
         # ── Train ──
         model.train()
         losses = []
-        running_loss = 0.0
 
         for bi, (bx, *_) in enumerate(trn_dl):
             bx = bx.float().to(device, non_blocking=True)
@@ -178,16 +158,14 @@ def main():
                 total += lg.item()
                 del out, mi, lg, xa, ma, mgs
             scaler.unscale_(opt)
-            torch.nn.utils.clip_grad_norm_(
-                model.module.parameters() if use_dp else model.parameters(), 1.0)
+            torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
             scaler.step(opt)
             scaler.update()
             losses.append(total)
-            running_loss = np.mean(losses[-50:])  # rolling avg last 50 batches
 
-            # Print progress every 50 batches
+            # Progress bar every 50 batches
             if (bi + 1) % 50 == 0 or (bi + 1) == n_batches:
-                progress_bar(bi + 1, n_batches, running_loss, ep_t0)
+                progress_bar(bi + 1, n_batches, np.mean(losses[-50:]), ep_t0)
 
         print()  # newline after progress bar
         avg_trn = np.mean(losses)
@@ -208,15 +186,13 @@ def main():
                         (crit(out, xf) * mi).sum().item() /
                         (mi.sum().item() + 1e-8))
 
-        avg_val = np.mean([np.mean(v) for v in vr.values()])
-        ep_time = (time.time() - ep_t0) / 60
+        avg_val  = np.mean([np.mean(v) for v in vr.values()])
+        ep_time  = (time.time() - ep_t0) / 60
 
         mark = ""
         if avg_val < best_val:
             best_val = avg_val
-            # Save base model state (unwrap DataParallel if needed)
-            state = model.module.state_dict() if use_dp else model.state_dict()
-            torch.save(state, ckpt)
+            torch.save(model.state_dict(), ckpt)
             patience_cnt = 0
             mark = " ★"
         else:
